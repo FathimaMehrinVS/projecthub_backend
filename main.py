@@ -1,13 +1,17 @@
 from fastapi import FastAPI,Query,HTTPException,Depends
-from typing import Annotated
 from pydantic import BaseModel,Field
 from datetime import datetime
 from enum import Enum
 from jose import jwt
 from fastapi.security import OAuth2PasswordBearer,OAuth2PasswordRequestForm
+from passlib.context import CryptContext
 SECRET_KEY="projecthub_backend_fastapi_2026"
 ALGORITHM="HS256"
 oauth2_scheme=OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login/")
+pwd_context=CryptContext(
+schemes=["bcrypt"],
+deprecated="auto"
+)
 class Projects(BaseModel):
     title:str=Field(min_length=1)
     description:str|None=None
@@ -32,12 +36,17 @@ class UserRegister(BaseModel):
     username:str
     password:str
 app=FastAPI()
+#Passlib helper functions
+def hash_password(pwd):
+    return pwd_context.hash(pwd)
+def verify_password(pwd,hash):
+    return pwd_context.verify(pwd,hash)
 users=[
     {
         "id":1,
         "email":"admin@company.com",
         "username":"admin",
-        "password":"admin@123",
+        "password":hash_password("admin@123"),
         "role":"admin",
         "created_at":datetime.now()
     },
@@ -45,7 +54,7 @@ users=[
         "id":2,
         "email":"manager@company.com",
         "username":"manager",
-        "password":"manager@123",
+        "password":hash_password("manager@123"),
         "role":"manager",
         "created_at":datetime.now()
     },
@@ -53,7 +62,7 @@ users=[
         "id":3,
         "email":"user@company.com",
         "username":"user",
-        "password":"user@123",
+        "password":hash_password("user@123"),
         "role":"user",
         "created_at":datetime.now()
     }
@@ -76,7 +85,7 @@ def verify_token(token):
     return payload
 def checkuser(data):
     for i in users:
-        if((i["email"]==data.username) and (i["password"]==data.password)):
+        if((i["email"]==data.username) and verify_password(data.password,i["password"])):
                 return i
     return None
 #find user : to  be later used in create-project
@@ -107,7 +116,7 @@ async def register(userReg:UserRegister):
     "id":len(users)+1,
     "email":userReg.email,
     "username":userReg.username,
-    "password":userReg.password,
+    "password":hash_password(userReg.password),
     "role":"user",
     "created_at":datetime.now()
     }
