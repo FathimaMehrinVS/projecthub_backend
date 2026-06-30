@@ -1,12 +1,13 @@
 from fastapi import FastAPI,Query,HTTPException,Depends
 from pydantic import BaseModel,Field
-from datetime import datetime
+from datetime import datetime,timedelta,timezone
 from enum import Enum
 from jose import jwt
 from fastapi.security import OAuth2PasswordBearer,OAuth2PasswordRequestForm
 from passlib.context import CryptContext
 SECRET_KEY="projecthub_backend_fastapi_2026"
 ALGORITHM="HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES=30
 oauth2_scheme=OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login/")
 pwd_context=CryptContext(
 schemes=["bcrypt"],
@@ -35,6 +36,11 @@ class UserRegister(BaseModel):
     email:str
     username:str
     password:str
+class UpdateProject(BaseModel):
+    title:str|None=None
+    description:None|str=None
+    status:Status|None=None
+    role:Role
 app=FastAPI()
 #Passlib helper functions
 def hash_password(pwd):
@@ -67,11 +73,65 @@ users=[
         "created_at":datetime.now()
     }
 ]
-projects=[]
+projects=[
+    {
+  "id": 1,
+  "title": "Salary Dashboard",
+  "description": "Efficient system to showcase salary management",
+  "status": "draft",
+  "owner_id": 1,
+  "owner_username": "admin",
+  "created_at": datetime.now(),
+  "updated_at": datetime.now()
+},
+{
+  "id": 2,
+  "title": "Pet adoption centre",
+  "description": "A system to manage pet adoption and care",
+  "status": "draft",
+  "owner_id": 1,
+  "owner_username": "admin",
+  "created_at": datetime.now(),
+  "updated_at": datetime.now()
+},
+{
+  "id": 3,
+  "title": "Flora and Fauna",
+  "description": "A library system for reading books related to flora and fauna",
+  "status": "draft",
+  "owner_id": 2,
+  "owner_username": "manager",
+  "created_at": datetime.now(),
+  "updated_at": datetime.now()
+},
+{
+  "id": 4,
+  "title": "Library Management system",
+  "description": "A management system for a library.",
+  "status": "draft",
+  "owner_id": 2,
+  "owner_username": "manager",
+  "created_at": datetime.now(),
+  "updated_at": datetime.now()
+},
+{
+  "id": 5,
+  "title": "Classroom Management system",
+  "description": "A management system for a classroom.",
+  "status": "draft",
+  "owner_id": 3,
+  "owner_username": "user",
+  "created_at": datetime.now(),
+  "updated_at": datetime.now()
+}
+]
 #create token function:
 def create_access_token(data):
+    to_encode=data.copy()
+    expiry=datetime.now(timezone.utc)+timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp":expiry})
     return jwt.encode(
-        data,
+        to_encode,
         SECRET_KEY,
         algorithm=ALGORITHM
     )
@@ -88,6 +148,14 @@ def checkuser(data):
         if((i["email"]==data.username) and verify_password(data.password,i["password"])):
                 return i
     return None
+#check duplicate email id used:
+def check_existing_user(email):
+    for i in users:
+        if i["email"]==email:
+            raise HTTPException(
+                status_code=400,
+                detail="Email is already in use"
+            )
 #find user : to  be later used in create-project
 def find_user(id):
     for i in users:
@@ -101,7 +169,7 @@ def get_current_user(token=Depends(oauth2_scheme)):
             status_code=401,
             detail="Invalid or expired token"
         )
-    user_id=payload["user_id"]
+    user_id=int(payload["sub"])
     user_record=find_user(user_id)
     if(user_record is None):
         raise HTTPException(
@@ -117,11 +185,18 @@ async def register(userReg:UserRegister):
     "email":userReg.email,
     "username":userReg.username,
     "password":hash_password(userReg.password),
-    "role":"user",
+    "role":Role.user.value,
     "created_at":datetime.now()
     }
+    check_existing_user(new_user["email"])
     users.append(new_user)
-    return new_user
+    return {
+    "id":new_user["id"],
+    "email":new_user["email"],
+    "username":new_user["username"],
+    "role":new_user["role"],
+    "created_at":new_user["created_at"]
+    }
 #login feature
 @app.post("/api/v1/auth/login/")
 async def login(form_data:OAuth2PasswordRequestForm=Depends()):
@@ -132,9 +207,8 @@ async def login(form_data:OAuth2PasswordRequestForm=Depends()):
             detail="Unauthorized error ! Email and Password doesnt match"
         )
     payload = {
-        "user_id" : user["id"],
-        "email" : user["email"],
-        "role":user["role"]
+        "sub" : str(user["id"]),
+        "role":user["role"],
     }
     token=create_access_token(payload)
     return {
@@ -145,7 +219,16 @@ async def login(form_data:OAuth2PasswordRequestForm=Depends()):
 @app.get("/api/v1/users/")
 async def read_users():
     #for accessing a global parameter, dont use query parameter
-    return users
+    return [
+        {
+        "id":i["id"],
+        "email":i["email"],
+        "username":i["username"],
+        "role":i["role"],
+        "created_at":i["created_at"]
+        }
+        for i in users
+    ]
 #create projects
 @app.post("/api/v1/create_projects")
 async def create_project(project:Projects,user=Depends(get_current_user)):
@@ -175,6 +258,7 @@ def find_project(pid):
     for i in projects:
         if(i["id"]==pid):
             return i
+    return None
 @app.get("/api/v1/projects/{project_id}")
 async def get_project(project_id:int,user=Depends(get_current_user)):
     #here we are passing the project id
@@ -196,4 +280,69 @@ async def get_project(project_id:int,user=Depends(get_current_user)):
 #JWT Authentication
 @app.get("/api/v1/auth/me")
 async def current_user(user_record=Depends(get_current_user)):
-    return user_record 
+    return {
+        "id":user_record["id"],
+        "email":user_record["email"],
+        "username":user_record["username"],
+        "role":user_record["role"],
+        "created_at":user_record["created_at"]
+    }
+#Update a specific project:
+@app.put("/api/v1/projects/{project_id}")
+#Update a project's title, description, or status.
+async def update_project(project_id:int,upd_proj:UpdateProject,user=Depends(get_current_user)):
+    p=find_project(project_id)
+    if p is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Project not found"
+        )
+    uid=p["owner_id"]
+    allowed={
+    "draft":["active","draft"],
+    "active":["completed",'archived',"active"],
+    "completed":["archived","completed"],
+    "archived":['archived']
+    }
+    if(user["role"]=='admin' or user["role"]=='manager' or user["id"]==uid):
+        #find the project based on pid:
+        if upd_proj.title is not None:
+            p["title"]=upd_proj.title
+        if upd_proj.description is not None:
+            p["description"]=upd_proj.description
+        if upd_proj.status is not None:
+            current=p["status"]
+            new=upd_proj.status.value
+            if new not in allowed[current]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Bad Request ! Invalid Status transition"
+                )
+            p["status"]=new
+    else:
+        raise HTTPException(
+            status_code=403,
+            detail="Unauthorized request"
+        )
+    p["updated_at"]=datetime.now()
+    #valid status transitions:
+    return p
+#Delete projects
+@app.delete("/api/v1/projects/{project_id}")
+async def del_proj(project_id:int,user=Depends(get_current_user)):
+    p=find_project(project_id)
+    if p is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Project not found"
+        )
+    if user['role']=="admin":
+        projects.remove(p)
+    else:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden request ! Only admin can delete a project"
+        )
+    return {
+        "message":"Project deleted successfully"
+    }
